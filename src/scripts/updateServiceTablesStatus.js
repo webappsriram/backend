@@ -7,8 +7,9 @@ dotenv.config();
  * Update all existing service_{id}_{name} tables to include 'Lead' in status ENUM
  */
 const updateServiceTablesStatus = async () => {
-  const connection = await pool.getConnection();
+  let connection;
   try {
+    connection = await pool.getConnection();
     // Find all service tables
     const [tables] = await connection.query(
       `SELECT TABLE_NAME 
@@ -68,12 +69,15 @@ const updateServiceTablesStatus = async () => {
     console.log(`   Skipped: ${skippedCount} tables`);
     console.log(`   Total: ${tables.length} tables`);
 
-    connection.release();
     process.exit(0);
   } catch (error) {
     console.error('❌ Error updating service tables:', error);
-    connection.release();
     process.exit(1);
+  } finally {
+    // Always release the connection
+    if (connection) {
+      connection.release();
+    }
   }
 };
 

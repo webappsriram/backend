@@ -7,8 +7,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const initDatabase = async () => {
+  let connection;
   try {
-    const connection = await pool.getConnection();
+    connection = await pool.getConnection();
     
     // List of migration files to execute
     const migrations = [
@@ -55,11 +56,15 @@ const initDatabase = async () => {
       }
     }
     
-    connection.release();
     console.log('✅ Database tables initialized successfully');
   } catch (error) {
     console.error('❌ Error initializing database:', error.message);
     throw error;
+  } finally {
+    // Always release the connection, even if there's an error
+    if (connection) {
+      connection.release();
+    }
   }
 };
 

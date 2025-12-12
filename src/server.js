@@ -33,10 +33,10 @@ initDatabase().catch(err => {
 
 // Routes
 app.get('/api/health', async (req, res) => {
-  let connection;
   try {
-    // Test database connection
-    connection = await pool.getConnection();
+    // Test database connection using pool.query instead of getConnection
+    // pool.query automatically handles connection acquisition and release
+    await pool.query('SELECT 1');
     res.json({ 
       status: 'ok', 
       message: 'Server is running',
@@ -46,13 +46,27 @@ app.get('/api/health', async (req, res) => {
     res.json({ 
       status: 'ok', 
       message: 'Server is running',
-      database: 'disconnected'
+      database: 'disconnected',
+      error: error.message
     });
-  } finally {
-    // Always release the connection
-    if (connection) {
-      connection.release();
-    }
+  }
+});
+
+// Connection pool stats endpoint (for monitoring)
+app.get('/api/health/db-stats', async (req, res) => {
+  try {
+    const stats = {
+      connectionLimit: pool.config.connectionLimit,
+      queueLimit: pool.config.queueLimit,
+      acquireTimeout: pool.config.acquireTimeout,
+      timeout: pool.config.timeout,
+      idleTimeout: pool.config.idleTimeout,
+      maxIdle: pool.config.maxIdle
+    };
+    
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
