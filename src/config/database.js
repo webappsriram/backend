@@ -10,10 +10,13 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME || 'invo_db',
   waitForConnections: true,
   port: process.env.DB_PORT || 3306,
-  connectionLimit: 10,
-  queueLimit: 0,
+  connectionLimit: 5, // Reduced from 10 to 5
+  queueLimit: 10, // Limited queue to prevent unbounded growth
   enableKeepAlive: true,
-  keepAliveInitialDelay: 0
+  keepAliveInitialDelay: 0,
+  acquireTimeout: 60000, // 60 seconds timeout to acquire connection
+  timeout: 60000, // 60 seconds query timeout
+  reconnect: true
 });
 
 // Test database connection

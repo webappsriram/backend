@@ -33,9 +33,10 @@ initDatabase().catch(err => {
 
 // Routes
 app.get('/api/health', async (req, res) => {
+  let connection;
   try {
     // Test database connection
-    await pool.getConnection();
+    connection = await pool.getConnection();
     res.json({ 
       status: 'ok', 
       message: 'Server is running',
@@ -47,6 +48,11 @@ app.get('/api/health', async (req, res) => {
       message: 'Server is running',
       database: 'disconnected'
     });
+  } finally {
+    // Always release the connection
+    if (connection) {
+      connection.release();
+    }
   }
 });
 
