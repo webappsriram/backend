@@ -8,12 +8,24 @@ import crypto from 'node:crypto';
  */
 export const getAllUsers = async (req, res) => {
   try {
-    const [users] = await pool.execute(
-      `SELECT id, name, email, role, profile_photo_url, created_on, modified_on 
-       FROM users 
-       WHERE is_deleted = FALSE AND role != 'master_user'
-       ORDER BY created_on DESC`
-    );
+    const loggedInUserId = req.user?.id;
+    
+    // Build query to exclude master_user role and logged-in user
+    let query = `SELECT id, name, email, role, profile_photo_url, created_on, modified_on 
+                 FROM users 
+                 WHERE is_deleted = FALSE 
+                   AND role != 'master_user'`;
+    const params = [];
+    
+    // Exclude logged-in user if available
+    if (loggedInUserId) {
+      query += ` AND id != ?`;
+      params.push(loggedInUserId);
+    }
+    
+    query += ` ORDER BY created_on DESC`;
+    
+    const [users] = await pool.execute(query, params);
 
     res.json({
       success: true,
@@ -107,6 +119,7 @@ export const createUser = async (req, res) => {
     sendPasswordSetupEmail(email, setupToken, name).catch(err => {
       console.error('Failed to send password setup email:', err);
     });
+
 
     // Fetch created user (without password)
     const [newUser] = await pool.execute(

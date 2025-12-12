@@ -12,6 +12,9 @@ import userRoutes from './routes/userRoutes.js';
 import passwordRoutes from './routes/passwordRoutes.js';
 import salesRoutes from './routes/salesRoutes.js';
 import leadRoutes from './routes/leadRoutes.js';
+import dashboardRoutes from './routes/dashboardRoutes.js';
+import formDataRoutes from './routes/formDataRoutes.js';
+import attendanceRoutes from './routes/attendanceRoutes.js';
 
 dotenv.config();
 
@@ -73,6 +76,15 @@ app.use('/api/sales', salesRoutes);
 
 // Lead routes
 app.use('/api/leads', leadRoutes);
+
+// Dashboard routes
+app.use('/api/dashboard', dashboardRoutes);
+
+// Form Data routes
+app.use('/api/form-data', formDataRoutes);
+
+// Attendance routes
+app.use('/api/attendance', attendanceRoutes);
 
 // Start server
 app.listen(PORT, () => {

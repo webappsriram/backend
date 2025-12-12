@@ -42,10 +42,12 @@ export const getInvoices = async (req, res) => {
                       WHERE i.is_deleted = FALSE`;
     let dataQuery = `SELECT i.id, i.invoice_number, i.customer_id, i.total_amount, i.status, 
                             i.payment_method, i.payment_reference_id,
-                            i.created_on, i.modified_on,
-                            c.name as customer_name, c.phone as customer_phone
+                            i.created_on, i.modified_on, i.created_by,
+                            c.name as customer_name, c.phone as customer_phone,
+                            u.name as created_by_name
                      FROM invoices i
                      INNER JOIN customers c ON i.customer_id = c.id
+                     LEFT JOIN users u ON i.created_by = u.id
                      WHERE i.is_deleted = FALSE`;
 
     const queryParams = [];
@@ -74,7 +76,7 @@ export const getInvoices = async (req, res) => {
     if (invoiceIds.length > 0) {
       const placeholders = invoiceIds.map(() => '?').join(',');
       const [invoiceItems] = await pool.execute(
-        `SELECT invoice_id, service_id, service_name, quantity, unit_price, total_price, form_data
+        `SELECT invoice_id, service_id, service_name, quantity, unit_price, total_price
          FROM invoice_items
          WHERE invoice_id IN (${placeholders})`,
         invoiceIds
@@ -82,7 +84,26 @@ export const getInvoices = async (req, res) => {
       items = invoiceItems;
     }
 
-    // Group items by invoice_id
+    // Get form data for each invoice from form_data table
+    let formDataByInvoice = {};
+    if (invoiceIds.length > 0) {
+      const placeholders = invoiceIds.map(() => '?').join(',');
+      const [formDataRecords] = await pool.execute(
+        `SELECT invoice_id, service_id, service_name, form_data
+         FROM form_data
+         WHERE invoice_id IN (${placeholders}) AND is_deleted = FALSE`,
+        invoiceIds
+      );
+      
+      formDataRecords.forEach(record => {
+        if (!formDataByInvoice[record.invoice_id]) {
+          formDataByInvoice[record.invoice_id] = {};
+        }
+        formDataByInvoice[record.invoice_id][record.service_id] = JSON.parse(record.form_data);
+      });
+    }
+
+    // Group items by invoice_id and attach form data
     const itemsByInvoice = {};
     items.forEach(item => {
       if (!itemsByInvoice[item.invoice_id]) {
@@ -94,7 +115,7 @@ export const getInvoices = async (req, res) => {
         quantity: parseFloat(item.quantity),
         unitPrice: parseFloat(item.unit_price),
         totalPrice: parseFloat(item.total_price),
-        formData: item.form_data ? JSON.parse(item.form_data) : null
+        formData: formDataByInvoice[item.invoice_id]?.[item.service_id] || null
       });
     });
 
@@ -111,6 +132,8 @@ export const getInvoices = async (req, res) => {
           status: invoice.status,
           paymentMethod: invoice.payment_method,
           paymentReferenceId: invoice.payment_reference_id,
+          createdBy: invoice.created_by,
+          createdByName: invoice.created_by_name || 'Unknown',
           items: itemsByInvoice[invoice.id] || [],
           createdOn: invoice.created_on,
           modifiedOn: invoice.modified_on
@@ -164,11 +187,25 @@ export const getInvoiceById = async (req, res) => {
 
     // Get invoice items
     const [items] = await pool.execute(
-      `SELECT id, service_id, service_name, quantity, unit_price, total_price, form_data
+      `SELECT id, service_id, service_name, quantity, unit_price, total_price
        FROM invoice_items
        WHERE invoice_id = ?`,
       [id]
     );
+
+    // Get form data from form_data table
+    const [formDataRecords] = await pool.execute(
+      `SELECT service_id, form_data
+       FROM form_data
+       WHERE invoice_id = ? AND is_deleted = FALSE`,
+      [id]
+    );
+
+    // Create a map of service_id to form_data
+    const formDataMap = {};
+    formDataRecords.forEach(record => {
+      formDataMap[record.service_id] = JSON.parse(record.form_data);
+    });
 
     res.json({
       success: true,
@@ -198,7 +235,7 @@ export const getInvoiceById = async (req, res) => {
             quantity: parseFloat(item.quantity),
             unitPrice: parseFloat(item.unit_price),
             totalPrice: parseFloat(item.total_price),
-            formData: item.form_data ? JSON.parse(item.form_data) : null
+            formData: formDataMap[item.service_id] || null
           })),
           createdOn: invoice.created_on,
           modifiedOn: invoice.modified_on
@@ -338,13 +375,22 @@ export const createInvoice = async (req, res) => {
 
     const invoiceId = invoiceResult.insertId;
 
-    // Insert invoice items (form data is stored in invoice_items.form_data)
+    // Insert invoice items (without form_data - it goes to separate table)
     for (const item of invoiceItems) {
       await connection.execute(
-        `INSERT INTO invoice_items (invoice_id, service_id, service_name, quantity, unit_price, total_price, form_data)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [invoiceId, item.serviceId, item.serviceName, item.quantity, item.unitPrice, item.totalPrice, item.formData]
+        `INSERT INTO invoice_items (invoice_id, service_id, service_name, quantity, unit_price, total_price)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [invoiceId, item.serviceId, item.serviceName, item.quantity, item.unitPrice, item.totalPrice]
       );
+
+      // Insert form data into separate form_data table if it exists
+      if (item.formData && Object.keys(item.formData).length > 0) {
+        await connection.execute(
+          `INSERT INTO form_data (invoice_id, service_id, service_name, form_data, created_by, is_deleted)
+           VALUES (?, ?, ?, ?, ?, FALSE)`,
+          [invoiceId, item.serviceId, item.serviceName, JSON.stringify(item.formData), userId]
+        );
+      }
     }
 
     await connection.commit();
@@ -361,11 +407,24 @@ export const createInvoice = async (req, res) => {
     );
 
     const [createdItems] = await connection.execute(
-      `SELECT id, service_id, service_name, quantity, unit_price, total_price, form_data
+      `SELECT id, service_id, service_name, quantity, unit_price, total_price
        FROM invoice_items
        WHERE invoice_id = ?`,
       [invoiceId]
     );
+
+    // Get form data from form_data table
+    const [formDataRecords] = await connection.execute(
+      `SELECT service_id, form_data
+       FROM form_data
+       WHERE invoice_id = ? AND is_deleted = FALSE`,
+      [invoiceId]
+    );
+
+    const formDataMap = {};
+    formDataRecords.forEach(record => {
+      formDataMap[record.service_id] = JSON.parse(record.form_data);
+    });
 
     res.status(201).json({
       success: true,
@@ -386,7 +445,7 @@ export const createInvoice = async (req, res) => {
             quantity: parseFloat(item.quantity),
             unitPrice: parseFloat(item.unit_price),
             totalPrice: parseFloat(item.total_price),
-            formData: item.form_data ? JSON.parse(item.form_data) : null
+            formData: formDataMap[item.service_id] || null
           })),
           createdOn: createdInvoices[0].created_on,
           modifiedOn: createdInvoices[0].modified_on
@@ -600,14 +659,29 @@ export const updateInvoice = async (req, res) => {
     if (items && Array.isArray(items)) {
       // Delete existing items
       await connection.execute('DELETE FROM invoice_items WHERE invoice_id = ?', [id]);
+      
+      // Soft delete existing form_data for this invoice
+      await connection.execute(
+        'UPDATE form_data SET is_deleted = TRUE WHERE invoice_id = ?',
+        [id]
+      );
 
-      // Insert new items (form data is stored in invoice_items.form_data)
+      // Insert new items (without form_data - it goes to separate table)
       for (const item of invoiceItems) {
         await connection.execute(
-          `INSERT INTO invoice_items (invoice_id, service_id, service_name, quantity, unit_price, total_price, form_data)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [id, item.serviceId, item.serviceName, item.quantity, item.unitPrice, item.totalPrice, item.formData]
+          `INSERT INTO invoice_items (invoice_id, service_id, service_name, quantity, unit_price, total_price)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [id, item.serviceId, item.serviceName, item.quantity, item.unitPrice, item.totalPrice]
         );
+
+        // Insert form data into separate form_data table if it exists
+        if (item.formData && Object.keys(item.formData).length > 0) {
+          await connection.execute(
+            `INSERT INTO form_data (invoice_id, service_id, service_name, form_data, created_by, is_deleted)
+             VALUES (?, ?, ?, ?, ?, FALSE)`,
+            [id, item.serviceId, item.serviceName, JSON.stringify(item.formData), req.user.id]
+          );
+        }
       }
     }
 
@@ -625,11 +699,24 @@ export const updateInvoice = async (req, res) => {
     );
 
     const [updatedItems] = await connection.execute(
-      `SELECT id, service_id, service_name, quantity, unit_price, total_price, form_data
+      `SELECT id, service_id, service_name, quantity, unit_price, total_price
        FROM invoice_items
        WHERE invoice_id = ?`,
       [id]
     );
+
+    // Get form data from form_data table
+    const [formDataRecords] = await connection.execute(
+      `SELECT service_id, form_data
+       FROM form_data
+       WHERE invoice_id = ? AND is_deleted = FALSE`,
+      [id]
+    );
+
+    const formDataMap = {};
+    formDataRecords.forEach(record => {
+      formDataMap[record.service_id] = JSON.parse(record.form_data);
+    });
 
     res.json({
       success: true,
@@ -650,7 +737,7 @@ export const updateInvoice = async (req, res) => {
             quantity: parseFloat(item.quantity),
             unitPrice: parseFloat(item.unit_price),
             totalPrice: parseFloat(item.total_price),
-            formData: item.form_data ? JSON.parse(item.form_data) : null
+            formData: formDataMap[item.service_id] || null
           })),
           createdOn: updatedInvoices[0].created_on,
           modifiedOn: updatedInvoices[0].modified_on

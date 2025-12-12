@@ -18,7 +18,10 @@ const initDatabase = async () => {
       'create_service_commands_table.sql',
       'create_password_reset_tokens_table.sql',
       'create_invoices_table_consolidated.sql',
-      'create_leads_table.sql'
+      'create_leads_table.sql',
+      'create_form_data_table.sql',
+      'migrate_form_data_to_separate_table.sql',
+      'create_attendance_table.sql',
     ];
     
     for (const migrationFile of migrations) {

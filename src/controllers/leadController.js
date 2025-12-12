@@ -115,6 +115,63 @@ export const createLead = async (req, res) => {
 };
 
 /**
+ * Check if a customer is already a lead
+ */
+export const checkCustomerLead = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+
+    if (!customerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer ID is required'
+      });
+    }
+
+    // Check if lead exists for this customer
+    const [leads] = await pool.execute(
+      `SELECT id, customer_id, comments, status, created_on, modified_on
+       FROM leads
+       WHERE customer_id = ? AND is_deleted = FALSE
+       LIMIT 1`,
+      [customerId]
+    );
+
+    if (leads.length > 0) {
+      return res.json({
+        success: true,
+        data: {
+          isLead: true,
+          lead: {
+            id: leads[0].id,
+            customerId: leads[0].customer_id,
+            comments: leads[0].comments,
+            status: leads[0].status,
+            createdOn: leads[0].created_on,
+            modifiedOn: leads[0].modified_on
+          }
+        }
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        isLead: false,
+        lead: null
+      }
+    });
+  } catch (error) {
+    console.error('Check customer lead error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to check customer lead status',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
  * Get all leads with pagination
  */
 export const getLeads = async (req, res) => {
